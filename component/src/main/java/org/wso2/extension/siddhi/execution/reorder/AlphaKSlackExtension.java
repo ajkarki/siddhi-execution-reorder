@@ -18,29 +18,34 @@
 
 package org.wso2.extension.siddhi.execution.reorder;
 
+import io.siddhi.annotation.Example;
+import io.siddhi.annotation.Extension;
+import io.siddhi.annotation.Parameter;
+import io.siddhi.annotation.ReturnAttribute;
+import io.siddhi.annotation.util.DataType;
+import io.siddhi.core.config.SiddhiQueryContext;
+import io.siddhi.core.event.ComplexEvent;
+import io.siddhi.core.event.ComplexEventChunk;
+import io.siddhi.core.event.stream.MetaStreamEvent;
+import io.siddhi.core.event.stream.StreamEvent;
+import io.siddhi.core.event.stream.StreamEventCloner;
+import io.siddhi.core.event.stream.holder.StreamEventClonerHolder;
+import io.siddhi.core.event.stream.populater.ComplexEventPopulater;
+import io.siddhi.core.exception.SiddhiAppCreationException;
+import io.siddhi.core.executor.ConstantExpressionExecutor;
+import io.siddhi.core.executor.ExpressionExecutor;
+import io.siddhi.core.query.processor.ProcessingMode;
+import io.siddhi.core.query.processor.Processor;
+import io.siddhi.core.query.processor.SchedulingProcessor;
+import io.siddhi.core.query.processor.stream.StreamProcessor;
+import io.siddhi.core.util.Scheduler;
+import io.siddhi.core.util.config.ConfigReader;
+import io.siddhi.core.util.snapshot.state.State;
+import io.siddhi.core.util.snapshot.state.StateFactory;
+import io.siddhi.query.api.definition.AbstractDefinition;
+import io.siddhi.query.api.definition.Attribute;
 import org.apache.commons.math3.distribution.NormalDistribution;
 import org.wso2.extension.siddhi.execution.reorder.utils.WindowCoverage;
-import org.wso2.siddhi.annotation.Example;
-import org.wso2.siddhi.annotation.Extension;
-import org.wso2.siddhi.annotation.Parameter;
-import org.wso2.siddhi.annotation.ReturnAttribute;
-import org.wso2.siddhi.annotation.util.DataType;
-import org.wso2.siddhi.core.config.SiddhiAppContext;
-import org.wso2.siddhi.core.event.ComplexEvent;
-import org.wso2.siddhi.core.event.ComplexEventChunk;
-import org.wso2.siddhi.core.event.stream.StreamEvent;
-import org.wso2.siddhi.core.event.stream.StreamEventCloner;
-import org.wso2.siddhi.core.event.stream.populater.ComplexEventPopulater;
-import org.wso2.siddhi.core.exception.SiddhiAppCreationException;
-import org.wso2.siddhi.core.executor.ConstantExpressionExecutor;
-import org.wso2.siddhi.core.executor.ExpressionExecutor;
-import org.wso2.siddhi.core.query.processor.Processor;
-import org.wso2.siddhi.core.query.processor.SchedulingProcessor;
-import org.wso2.siddhi.core.query.processor.stream.StreamProcessor;
-import org.wso2.siddhi.core.util.Scheduler;
-import org.wso2.siddhi.core.util.config.ConfigReader;
-import org.wso2.siddhi.query.api.definition.AbstractDefinition;
-import org.wso2.siddhi.query.api.definition.Attribute;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -173,7 +178,8 @@ import java.util.concurrent.locks.ReentrantLock;
                 description = "This query performs reordering based on the 'eventtt' attribute values. In this " +
                         "example, 20 represents the batch size.")
 )
-public class AlphaKSlackExtension extends StreamProcessor implements SchedulingProcessor {
+public class AlphaKSlackExtension extends StreamProcessor<AlphaKSlackExtension.ExtensionState>
+        implements SchedulingProcessor {
     private Long k = 0L; //In the beginning the K is zero.
     private Long largestTimestamp = 0L; //Used to track the greatest timestamp of tuples seen so far.
     private TreeMap<Long, List<StreamEvent>> primaryTreeMap;
@@ -200,65 +206,16 @@ public class AlphaKSlackExtension extends StreamProcessor implements SchedulingP
     private double errorThreshold = 0.03;
     private double confidenceLevel = 0.95;
     private double alpha = 1;
-    private SiddhiAppContext siddhiAppContext;
     private WindowCoverage windowCoverage;
     private double criticalValue;
     private long l = 0;
     private long windowSize = 10000000000L;
-
-    public AlphaKSlackExtension() {
-    }
-
-    @Override
-    public void start() {
-        //Do nothing
-    }
-
-    @Override
-    public void stop() {
-        //Do nothing
-    }
-
-    @Override
-    public Map<String, Object> currentState() {
-        Map<String, Object> stateMap = new HashMap<String, Object>();
-        stateMap.put("k", k);
-        stateMap.put("largestTimestamp", largestTimestamp);
-        stateMap.put("lastSentTimestamp", lastSentTimestamp);
-        stateMap.put("lastScheduledTimestamp", lastScheduledTimestamp);
-        stateMap.put("previousAlpha", previousAlpha);
-        stateMap.put("counter", counter);
-        stateMap.put("previousError", previousError);
-        stateMap.put("kp", kp);
-        stateMap.put("kd", kd);
-        stateMap.put("primaryTreeMap", primaryTreeMap);
-        stateMap.put("secondaryTreeMap", secondaryTreeMap);
-        stateMap.put("dataItemList", dataItemList);
-        stateMap.put("timestampList", timestampList);
-        return stateMap;
-    }
-
-    @Override
-    public void restoreState(Map<String, Object> map) {
-        k = (Long) map.get("k");
-        largestTimestamp = (Long) map.get("largestTimestamp");
-        lastSentTimestamp = (Long) map.get("lastSentTimestamp");
-        lastScheduledTimestamp = (Long) map.get("lastScheduledTimestamp");
-        previousAlpha = (Double) map.get("previousAlpha");
-        counter = (Integer) map.get("counter");
-        previousError = (Double) map.get("previousError");
-        kp = (Double) map.get("kp");
-        kd = (Double) map.get("kd");
-        primaryTreeMap = (TreeMap) map.get("primaryTreeMap");
-        secondaryTreeMap = (TreeMap) map.get("secondaryTreeMap");
-        dataItemList = (List) map.get("dataItemList");
-        timestampList = (List) map.get("timestampList");
-    }
+    List<Attribute> attributes;
 
     @Override
     protected void process(ComplexEventChunk<StreamEvent> streamEventChunk, Processor nextProcessor,
-                           StreamEventCloner streamEventCloner,
-                           ComplexEventPopulater complexEventPopulater) {
+                           StreamEventCloner streamEventCloner, ComplexEventPopulater complexEventPopulater,
+                           ExtensionState state) {
         ComplexEventChunk<StreamEvent> complexEventChunk = new ComplexEventChunk<StreamEvent>(false);
         try {
             lock.lock();
@@ -413,10 +370,13 @@ public class AlphaKSlackExtension extends StreamProcessor implements SchedulingP
     }
 
     @Override
-    protected List<Attribute> init(AbstractDefinition abstractDefinition, ExpressionExecutor[] expressionExecutors,
-                                   ConfigReader configReader, SiddhiAppContext siddhiAppContext) {
-        List<Attribute> attributes = new ArrayList<Attribute>();
-        this.siddhiAppContext = siddhiAppContext;
+    protected StateFactory<ExtensionState> init(MetaStreamEvent metaStreamEvent, AbstractDefinition inputDefinition,
+                                                ExpressionExecutor[] attributeExpressionExecutors,
+                                                ConfigReader configReader,
+                                                StreamEventClonerHolder streamEventClonerHolder,
+                                                boolean outputExpectsExpiredEvents, boolean findToBeExecuted,
+                                                SiddhiQueryContext siddhiQueryContext) {
+        attributes = new ArrayList<Attribute>();
         if (attributeExpressionLength > 8 || attributeExpressionLength < 2
                 || attributeExpressionLength == 7) {
             throw new SiddhiAppCreationException("Maximum six input parameters " +
@@ -577,7 +537,71 @@ public class AlphaKSlackExtension extends StreamProcessor implements SchedulingP
         primaryTreeMap = new TreeMap<Long, List<StreamEvent>>();
         secondaryTreeMap = new TreeMap<Long, List<StreamEvent>>();
 
+        return () -> new ExtensionState();
+    }
+
+    @Override
+    public List<Attribute> getReturnAttributes() {
         return attributes;
+    }
+
+    @Override
+    public ProcessingMode getProcessingMode() {
+        return ProcessingMode.BATCH;
+    }
+
+    @Override
+    public void start() {
+        //Do nothing
+    }
+
+    @Override
+    public void stop() {
+        //Do nothing
+    }
+
+    class ExtensionState extends State {
+
+        @Override
+        public boolean canDestroy() {
+            return false;
+        }
+
+        @Override
+        public Map<String, Object> snapshot() {
+            Map<String, Object> stateMap = new HashMap<String, Object>();
+            stateMap.put("k", k);
+            stateMap.put("largestTimestamp", largestTimestamp);
+            stateMap.put("lastSentTimestamp", lastSentTimestamp);
+            stateMap.put("lastScheduledTimestamp", lastScheduledTimestamp);
+            stateMap.put("previousAlpha", previousAlpha);
+            stateMap.put("counter", counter);
+            stateMap.put("previousError", previousError);
+            stateMap.put("kp", kp);
+            stateMap.put("kd", kd);
+            stateMap.put("primaryTreeMap", primaryTreeMap);
+            stateMap.put("secondaryTreeMap", secondaryTreeMap);
+            stateMap.put("dataItemList", dataItemList);
+            stateMap.put("timestampList", timestampList);
+            return stateMap;
+        }
+
+        @Override
+        public void restore(Map<String, Object> map) {
+            k = (Long) map.get("k");
+            largestTimestamp = (Long) map.get("largestTimestamp");
+            lastSentTimestamp = (Long) map.get("lastSentTimestamp");
+            lastScheduledTimestamp = (Long) map.get("lastScheduledTimestamp");
+            previousAlpha = (Double) map.get("previousAlpha");
+            counter = (Integer) map.get("counter");
+            previousError = (Double) map.get("previousError");
+            kp = (Double) map.get("kp");
+            kd = (Double) map.get("kd");
+            primaryTreeMap = (TreeMap) map.get("primaryTreeMap");
+            secondaryTreeMap = (TreeMap) map.get("secondaryTreeMap");
+            dataItemList = (List) map.get("dataItemList");
+            timestampList = (List) map.get("timestampList");
+        }
     }
 
     @Override
@@ -589,7 +613,7 @@ public class AlphaKSlackExtension extends StreamProcessor implements SchedulingP
     public void setScheduler(Scheduler scheduler) {
         this.scheduler = scheduler;
         if (lastScheduledTimestamp < 0 && flag) {
-            lastScheduledTimestamp = siddhiAppContext.getTimestampGenerator().currentTime() +
+            lastScheduledTimestamp = siddhiQueryContext.getSiddhiAppContext().getTimestampGenerator().currentTime() +
                     timerDuration;
             scheduler.notifyAt(lastScheduledTimestamp);
         }
